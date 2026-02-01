@@ -30,6 +30,10 @@ _G.SkipTarget = false
 _G.BlacklistedPlayers = {}
 if not _G.ServerHopBlacklist then _G.ServerHopBlacklist = {} end
 
+-- [[ 追加設定：ここを直接書き換えました ]]
+_G.AutoRaceV4_Force = true
+_G.AutoRaceV3_Ability = true
+
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local HttpService = game:GetService("HttpService")
 local TeleportService = game:GetService("TeleportService")
@@ -149,17 +153,15 @@ local function isInsideSafeZone(char)
     return false
 end
 
--- 【今回の修正箇所】セーフゾーン内で攻撃するかどうかの判定
+-- セーフゾーン内攻撃判定
 local function shouldTargetInSafeZone(targetPlayer)
     local charInWorkspace = workspace:FindFirstChild("Characters") and workspace.Characters:FindFirstChild(targetPlayer.Name)
     if charInWorkspace and charInWorkspace:FindFirstChild("InCombat") then
         local combatVal = charInWorkspace.InCombat.Value
-        -- 0という数字が入っている場合、またはチェックマーク(true)がある場合は狙う
         if type(combatVal) == "number" or combatVal == true then
             return true
         end
     end
-    -- チェックマークがない(false)状態は狙わない
     return false
 end
 
@@ -187,9 +189,6 @@ task.spawn(function()
                 
                 if pvp ~= true and char and char:FindFirstChild("Humanoid") and char.Humanoid.Health > 0 and targetHrp then
                     local inSafe = isInsideSafeZone(char)
-                    
-                    -- セーフゾーン外ならOK。
-                    -- セーフゾーン内なら「数字(0含む)またはチェックあり」の時だけターゲットにする。
                     if not inSafe or (inSafe and shouldTargetInSafeZone(p)) then
                         table.insert(currentTargets, p)
                     end
@@ -210,8 +209,6 @@ task.spawn(function()
                     local myRoot = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
 
                     if not hum or hum.Health <= 0 then break end
-                    
-                    -- 追撃中：セーフゾーンに入り、かつ「チェックマークがなくなり数字でもなくなった」ら即中止
                     if isInsideSafeZone(char) and not shouldTargetInSafeZone(targetPlayer) then
                         break
                     end
@@ -235,4 +232,79 @@ task.spawn(function()
         end
         task.wait(1)
     end
+end)
+
+-- ==================================================
+-- Blox Fruits: Race V4 & V3 分離セクション
+-- ==================================================
+task.spawn(function()
+    local BF = (typeof(BloxFruitsTab) == "Instance" or typeof(BloxFruitsTab) == "userdata") and BloxFruitsTab or MainTab 
+
+    local LP = game:GetService("Players").LocalPlayer
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local RS = game:GetService("RunService")
+
+    local AbilityCooldown = 0
+    local RaceAbilities = {
+        "Last Resort", "Agility", "Water Body", "Heavenly Blood",
+        "Heightened Senses", "Energy Core", "Primordial Reign"
+    }
+
+    local function HasAbility()
+        local char = LP.Character
+        if not char then return false end
+        for _, v in ipairs(RaceAbilities) do
+            if LP.Backpack:FindFirstChild(v) or char:FindFirstChild(v) then return true end
+        end
+        return false
+    end
+
+    --------------------------------------------------
+    -- 1. UI追加 (UIの初期値もtrueに設定)
+    --------------------------------------------------
+    if BF and typeof(CreateToggle) == "function" then
+        CreateToggle(BF, "Auto Race V4 (強制変身)", true, function(v)
+            _G.AutoRaceV4_Force = v
+        end)
+
+        CreateToggle(BF, "Auto Race Ability (V3スキル連打)", true, function(v)
+            _G.AutoRaceV3_Ability = v
+        end)
+    end
+
+    --------------------------------------------------
+    -- 2. 独立ロジック (Heartbeatで常にフラグをチェック)
+    --------------------------------------------------
+    RS.Heartbeat:Connect(function(dt)
+        local char = LP.Character
+        if not char then return end
+
+        pcall(function()
+            -- --- [ V4 強制変身 ] ---
+            if _G.AutoRaceV4_Force then
+                local energy = char:FindFirstChild("RaceEnergy")
+                if energy and energy.Value >= 1 then
+                    local rt = char:FindFirstChild("RaceTransformed")
+                    if rt then rt.Value = false end
+                    ReplicatedStorage.Remotes.CommE:FireServer("ActivateAbility")
+                    local t = LP.Backpack:FindFirstChild("Awakening") or char:FindFirstChild("Awakening")
+                    if t and t:FindFirstChild("RemoteFunction") then 
+                        t.RemoteFunction:InvokeServer(true) 
+                    end
+                end
+            end
+
+            -- --- [ V3 スキル連打 ] ---
+            if _G.AutoRaceV3_Ability then
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                if hum and hum.Health > 0 and HasAbility() then
+                    AbilityCooldown = AbilityCooldown - dt
+                    if AbilityCooldown <= 0 then
+                        ReplicatedStorage.Remotes.CommE:FireServer("ActivateAbility")
+                        AbilityCooldown = 0.2
+                    end
+                end
+            end
+        end)
+    end)
 end)
